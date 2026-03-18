@@ -1,16 +1,19 @@
 """Thin Anthropic API wrapper with token tracking."""
 
+import os
 import threading
 
 import anthropic
+
+DEFAULT_MODEL = os.environ.get("ARENA_MODEL", "claude-haiku-4-5-20251001")
 
 
 class LLM:
     """Wrapper around Anthropic's API with cumulative token tracking."""
 
-    def __init__(self, model: str = "claude-sonnet-4-20250514"):
-        self.client = anthropic.Anthropic()  # uses ANTHROPIC_API_KEY from env
-        self.model = model
+    def __init__(self, model: str | None = None):
+        self.client = anthropic.Anthropic()
+        self.model = model or DEFAULT_MODEL
         self._input_tokens = 0
         self._output_tokens = 0
         self._lock = threading.Lock()

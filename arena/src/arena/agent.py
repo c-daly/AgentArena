@@ -47,15 +47,19 @@ def _run_api(llm: LLM, system: str, prompt: str) -> str:
 
 
 def _extract_code(response: str) -> str:
-    """Extract Python code from LLM response, stripping markdown fences if present."""
-    text = response.strip()
-    if text.startswith("```python"):
-        text = text[len("```python"):].strip()
-    elif text.startswith("```"):
-        text = text[3:].strip()
-    if text.endswith("```"):
-        text = text[:-3].strip()
-    return text
+    """Extract Python code from LLM response, stripping markdown fences and preamble."""
+    import re
+    match = re.search(r'```python\n(.*?)```', response, re.DOTALL)
+    if match:
+        return match.group(1).strip()
+    match = re.search(r'```\n(.*?)```', response, re.DOTALL)
+    if match:
+        return match.group(1).strip()
+    lines = response.strip().splitlines()
+    code_starts = ('import ', 'from ', 'def ', 'class ', '#')
+    while lines and not lines[0].startswith(code_starts):
+        lines.pop(0)
+    return chr(10).join(lines).strip()
 
 
 # ---------------------------------------------------------------------------
