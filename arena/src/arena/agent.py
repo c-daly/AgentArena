@@ -30,17 +30,20 @@ def _use_claude_code() -> bool:
 
 
 def _run_claude_code(prompt: str, workdir: Path, timeout: int = 300) -> str:
-    """Run a prompt through claude CLI and return the response."""
+    """Run a prompt through claude CLI, piping prompt via stdin."""
     try:
-        result = subprocess.run(
-            ["claude", "--print", "--dangerously-skip-permissions", "-p", prompt],
-            capture_output=True,
+        proc = subprocess.Popen(
+            ["claude", "--print", "--dangerously-skip-permissions"],
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
             text=True,
-            timeout=timeout,
             cwd=workdir,
         )
-        return result.stdout.strip()
+        stdout, _ = proc.communicate(input=prompt, timeout=timeout)
+        return stdout.strip()
     except subprocess.TimeoutExpired:
+        proc.kill()
         return ""
 
 
@@ -63,6 +66,73 @@ def _extract_code(response: str) -> str:
     while lines and not lines[0].startswith(code_starts):
         lines.pop(0)
     return chr(10).join(lines).strip()
+
+
+
+# ---------------------------------------------------------------------------
+# Journal system — persistent per-agent memory across rounds
+# ---------------------------------------------------------------------------
+
+def _build_journal_entry(
+    report: FitnessReport,
+    rival_solutions: dict[str, list["Solution"]],
+    agent_id: str,
+) -> str:
+    """Build a journal entry summarizing one round's results."""
+    lines = [f"## Round {report.round_num}"]
+    lines.append(f"Scores: solve={report.solve_score:.2f} author={report.author_score:.2f} novelty={report.novelty_score:.2f} total={report.total_score:.2f}")
+    lines.append("")
+
+    # What worked and what didn't
+    for sol in report.solutions:
+        status = "PASS" if sol.pass_rate == 1.0 else f"{sol.passed}/{sol.total}"
+        lines.append(f"- {sol.challenge_id}: {status}")
+        if sol.error_output and sol.pass_rate < 1.0:
+            # One-line error summary
+            err = sol.error_output.strip().splitlines()[-1][:120]
+            lines.append(f"  Error: {err}")
+
+    # One best rival technique per challenge (deduplicated)
+    seen: set[str] = set()
+    rival_notes = []
+    for aid, sols in rival_solutions.items():
+        if aid == agent_id:
+            continue
+        for s in sols:
+            if not s.code or s.challenge_id in seen or s.pass_rate <= 0:
+                continue
+            if s.pass_rate > report.solutions[0].pass_rate if report.solutions else True:
+                seen.add(s.challenge_id)
+                # Extract just the key function signatures
+                sig_lines = [l for l in s.code.splitlines()[:30] if l.startswith("def ") or l.startswith("class ")]
+                if sig_lines:
+                    rival_notes.append(f"- Rival approach for {s.challenge_id}: {', '.join(sig_lines[:3])}")
+
+    if rival_notes:
+        lines.append("")
+        lines.append("Rival techniques worth studying:")
+        lines.extend(rival_notes)
+
+    lines.append("")
+    return chr(10).join(lines)
+
+
+def _append_journal(journal_path: Path, entry: str) -> None:
+    """Append an entry to the agent's journal, keeping last 10 entries."""
+    existing = ""
+    if journal_path.exists():
+        existing = journal_path.read_text()
+
+    # Split into entries, keep last 9 + new one = 10
+    entries = [e.strip() for e in existing.split("## Round") if e.strip()]
+    entries = entries[-9:]  # keep last 9
+    
+    rebuilt = ""
+    for e in entries:
+        rebuilt += f"## Round{e}" + chr(10) + chr(10)
+    rebuilt += entry
+
+    journal_path.write_text(rebuilt)
 
 
 # ---------------------------------------------------------------------------
@@ -183,35 +253,13 @@ def evolve(
     core_path = agent.source_dir / "core.py"
     own_source = core_path.read_text()
 
-    # Format fitness report
-    fitness_text = (
-        f"Round: {report.round_num}\n"
-        f"Solve score: {report.solve_score:.2f}\n"
-        f"Author score: {report.author_score:.2f}\n"
-        f"Novelty score: {report.novelty_score:.2f}\n"
-        f"Total score: {report.total_score:.2f}\n"
-    )
-    for sol in report.solutions:
-        fitness_text += (
-            f"  {sol.challenge_id}: {sol.passed}/{sol.total}"
-            f" ({sol.pass_rate:.0%})\n"
-        )
-        if sol.error_output:
-            err_lines = sol.error_output.strip().splitlines()[-3:]
-            for line in err_lines:
-                fitness_text += f"    {line}\n"
+    # Write journal entry and build evolve prompt from journal
+    journal_path = agent.source_dir / "journal.md"
+    entry = _build_journal_entry(report, rival_solutions, agent.id)
+    _append_journal(journal_path, entry)
 
-    # Format rival solutions (exclude self)
-    solutions_text = ""
-    for agent_id, sols in rival_solutions.items():
-        if agent_id == agent.id:
-            continue
-        for s in sols:
-            solutions_text += (
-                f"\n--- {agent_id} solving {s.challenge_id} ---\n{s.code[:500]}\n"
-            )
-
-    prompt = module.evolve_prompt(own_source, fitness_text, solutions_text)
+    journal = journal_path.read_text() if journal_path.exists() else ""
+    prompt = module.evolve_prompt(own_source, journal, "")
 
     if _use_claude_code():
         response = _run_claude_code(prompt, agent.source_dir)

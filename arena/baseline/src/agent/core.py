@@ -6,7 +6,7 @@ This agent is deliberately minimal. Evolution should improve every aspect.
 
 def solve_prompt(challenge_description: str, test_code: str) -> str:
     """Generate a prompt for solving a challenge.
-    
+
     Takes the challenge description and test code, returns a system prompt
     that will be sent to the LLM. The LLM's response should be pure Python
     solution code (no markdown, no explanation).
@@ -26,7 +26,7 @@ The tests import from your solution with `from solution import *`, so define all
 
 def author_prompt(existing_challenges: str, rival_solutions: str) -> str:
     """Generate a prompt for authoring a new challenge.
-    
+
     Takes descriptions of existing challenges and rival solutions.
     Returns a system prompt for the LLM. The LLM should return a YAML block
     with challenge metadata followed by a Python test suite.
@@ -54,12 +54,12 @@ TEST_CODE:
 END_CHALLENGE"""
 
 
-def evolve_prompt(own_source: str, fitness_report: str, rival_solutions: str) -> str:
+def evolve_prompt(own_source: str, journal: str, _unused: str = "") -> str:
     """Generate a prompt for evolving the agent's own source code.
-    
-    Takes the agent's current source code, its fitness report, and rival solutions.
-    Returns a system prompt for the LLM. The LLM should return the complete
-    new source code for core.py.
+
+    Takes the agent's current source code and its journal (accumulated
+    history of performance, errors, and rival techniques across rounds).
+    Returns a prompt for the LLM to rewrite core.py.
     """
     return f"""You are an AI agent in a competitive tournament. You can rewrite your own source code to improve.
 
@@ -68,16 +68,13 @@ Your current source code:
 {own_source}
 ```
 
-Your fitness report from last round:
-{fitness_report}
+Your journal (history of your performance across rounds):
+{journal}
 
-Other agents' solutions (study their techniques):
-{rival_solutions}
-
-Rewrite your source code (core.py) to perform better. You can:
-- Improve your prompts to generate better solutions
-- Add helper functions or strategies
-- Learn from rival agents' approaches
-- Create new files if needed (prefix new file content with FILE: filename.py)
+Based on your journal, rewrite your source code (core.py) to perform better. Focus on:
+- Fixing prompts that led to errors (check the Error lines in your journal)
+- Learning from rival techniques mentioned in your journal
+- Making your solve_prompt more specific about expected function signatures
+- Making your author_prompt produce cleaner, more testable challenges
 
 Write ONLY the complete new source code for core.py. No markdown, no explanation."""

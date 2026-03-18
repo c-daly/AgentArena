@@ -60,6 +60,9 @@ The default model is Haiku since that's all the OAuth key supports. If the user 
 ### User's global CLAUDE.md leaks into agent responses
 The `claude` CLI loads `~/.claude/CLAUDE.md` which includes the `[TRIVIAL]`/`[SIMPLE]`/`[COMPLEX]` classification rule. This gets prepended to agent responses. The `_extract_code` regex fix handles this, but ideally agents would run with `--no-user-rules` or a custom system prompt to avoid contamination. Investigate claude CLI flags for this.
 
+### Journal system (just added)
+Each agent now has a persistent journal (journal.md in their source dir) that accumulates across rounds. After each round the harness writes an entry with scores, errors, and notable rival techniques. The evolve prompt reads the journal instead of raw rival solution dumps. This keeps prompts focused and gives agents a narrative of their improvement over time. Last 10 entries are retained.
+
 ### Bootstrap problem with evolution
 If all agents start identical and all fail, there's no fitness gradient for evolution to work with. Now that the solve pipeline works (9/9 on smart_cache), this should be less of an issue — agents will produce working solutions, creating real fitness variation.
 
