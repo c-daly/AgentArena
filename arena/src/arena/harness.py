@@ -1,7 +1,10 @@
-"""Tournament loop — runs rounds, manages the agent population, coordinates phases."""
+"""Tournament loop -- runs rounds, manages the agent population, coordinates phases."""
 
 import json
 import shutil
+import threading
+import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
 from arena.models import (
@@ -14,8 +17,9 @@ from arena.models import (
 )
 from arena.llm import LLM
 from arena import agent, challenges, mutator, display
+from rich.live import Live
 
-# Rotating authoring directives — one per round, cycles
+# Rotating authoring directives -- one per round, cycles
 DIRECTIVES = [
     "Design a challenge that tests algorithmic thinking and requires O(n log n) or better.",
     "Create a challenge involving data structure design with specific performance constraints.",
@@ -37,6 +41,7 @@ class Tournament:
         num_agents: int = 4,
         challenges_per_round: int = 4,
         total_rounds: int = 20,
+        max_workers: int = 8,
     ):
         self.tournament_dir = tournament_dir
         self.agents_dir = tournament_dir / "agents"
@@ -45,25 +50,23 @@ class Tournament:
         self.num_agents = num_agents
         self.challenges_per_round = challenges_per_round
         self.total_rounds = total_rounds
+        self.max_workers = max_workers
         self.llm = LLM()
         self.state = TournamentState()
         self.challenges: list[ChallengeSpec] = []
-        self.all_solutions: dict[str, list[Solution]] = {}  # agent_id -> solutions
+        self.all_solutions: dict[str, list[Solution]] = {}
 
     def setup(self, baseline_dir: Path, seed_challenges_dir: Path) -> None:
         """Initialize tournament: create dirs, clone baseline agents, load seed challenges."""
-        # Create directory structure
         self.tournament_dir.mkdir(parents=True, exist_ok=True)
         self.agents_dir.mkdir(exist_ok=True)
         self.rounds_dir.mkdir(exist_ok=True)
         self.challenges_dir.mkdir(exist_ok=True)
 
-        # Clone baseline agent N times
         for i in range(self.num_agents):
             agent_id = f"agent_{i:03d}"
             agent_dir = self.agents_dir / agent_id / "src" / "agent"
             agent_dir.mkdir(parents=True, exist_ok=True)
-            # Copy baseline files
             for f in (baseline_dir / "src" / "agent").iterdir():
                 if f.is_file():
                     shutil.copy2(f, agent_dir / f.name)
@@ -71,134 +74,189 @@ class Tournament:
                 AgentInfo(id=agent_id, generation=0, source_dir=agent_dir)
             )
 
-        # Load seed challenges
         if seed_challenges_dir.exists():
             for challenge_dir in sorted(seed_challenges_dir.iterdir()):
                 if challenge_dir.is_dir():
                     try:
                         spec = challenges.load_challenge(challenge_dir)
-                        # Copy to tournament challenges dir
                         challenges.save_challenge(spec, self.challenges_dir)
                         self.challenges.append(spec)
                         self.state.challenge_ids.append(spec.id)
                     except Exception as e:
-                        print(f"Warning: Failed to load {challenge_dir}: {e}")
+                        display.console.print(
+                            f"[yellow]Warning:[/] Failed to load {challenge_dir}: {e}"
+                        )
 
     def run(self) -> None:
         """Run the full tournament."""
-        for round_num in range(1, self.total_rounds + 1):
+        start_round = self.state.round_num + 1
+        for round_num in range(start_round, self.total_rounds + 1):
             self.state.round_num = round_num
             display.show_tournament_header(
-                round_num,
-                self.total_rounds,
-                len(self.state.agents),
-                len(self.challenges),
+                round_num, self.total_rounds,
+                len(self.state.agents), len(self.challenges),
             )
 
+            round_start = time.time()
             result = self._run_round(round_num)
-            self.state.history.append(result)
+            round_elapsed = time.time() - round_start
 
-            # Save round data
+            self.state.history.append(result)
             self._save_round(round_num, result)
             self._save_state()
 
-            # Display results
             display.show_round_summary(result)
             display.show_leaderboard(result.fitness_reports)
             if self.all_solutions:
                 display.show_technique_map(self.all_solutions)
+            display.show_token_usage(self.llm.token_usage)
+            display.console.print(f"  [dim]Round completed in {round_elapsed:.1f}s[/]")
 
     def _run_round(self, round_num: int) -> RoundResult:
         """Execute one tournament round: solve -> author -> score -> evolve."""
         result = RoundResult(round_num=round_num)
-        round_solutions: dict[str, list[Solution]] = {}  # agent_id -> solutions this round
+        round_solutions: dict[str, list[Solution]] = {}
 
         # Select challenges for this round
         active_challenges = self.challenges[: self.challenges_per_round]
         if len(self.challenges) > self.challenges_per_round:
-            # Rotate: use a sliding window
-            start = (
-                (round_num - 1) * self.challenges_per_round % len(self.challenges)
-            )
+            start = (round_num - 1) * self.challenges_per_round % len(self.challenges)
             indices = [
                 (start + i) % len(self.challenges)
                 for i in range(min(self.challenges_per_round, len(self.challenges)))
             ]
             active_challenges = [self.challenges[i] for i in indices]
 
-        # === SOLVE PHASE ===
-        print(
-            f"\n[Solve Phase] {len(self.state.agents)} agents x {len(active_challenges)} challenges"
+        agent_ids = [ag.id for ag in self.state.agents]
+        challenge_ids = [ch.id for ch in active_challenges]
+
+        # === SOLVE PHASE (parallel with live display) ===
+        n_tasks = len(self.state.agents) * len(active_challenges)
+        display.show_phase_banner(
+            "solve",
+            f"{len(self.state.agents)} agents x {len(active_challenges)} challenges = {n_tasks} tasks"
         )
-        for ag in self.state.agents:
-            agent_solutions = []
-            for challenge in active_challenges:
-                try:
-                    code = agent.solve(ag, challenge, self.llm)
-                    passed, total, error_output, elapsed = challenges.run_tests(
-                        code, challenge.test_code
-                    )
-                    sol = Solution(
-                        agent_id=ag.id,
-                        challenge_id=challenge.id,
-                        code=code,
-                        passed=passed,
-                        total=total,
-                        error_output=error_output,
-                        elapsed_seconds=elapsed,
-                    )
-                except Exception as e:
-                    sol = Solution(
-                        agent_id=ag.id,
-                        challenge_id=challenge.id,
-                        code="",
-                        error_output=str(e),
-                    )
-                agent_solutions.append(sol)
-                print(f"  {ag.id} vs {challenge.id}: {sol.passed}/{sol.total}")
-            round_solutions[ag.id] = agent_solutions
 
-        self.all_solutions = round_solutions  # update for display
+        solve_results: dict[tuple[str, str], Solution] = {}
+        in_progress: set[tuple[str, str]] = set()
+        lock = threading.Lock()
+        t0 = time.time()
 
-        # === AUTHOR PHASE ===
-        print("\n[Author Phase]")
-        directive = DIRECTIVES[(round_num - 1) % len(DIRECTIVES)]
-        for ag in self.state.agents:
-            new_challenge = None
+        def solve_one(ag: AgentInfo, ch: ChallengeSpec) -> Solution:
+            key = (ag.id, ch.id)
+            with lock:
+                in_progress.add(key)
             try:
-                new_challenge = agent.author(
-                    ag, self.challenges, round_solutions, self.llm
+                code = agent.solve(ag, ch, self.llm)
+                passed, total, error_output, elapsed = challenges.run_tests(
+                    code, ch.test_code
                 )
-                if new_challenge:
-                    # Verify: author must solve their own challenge
-                    verify_code = agent.solve(ag, new_challenge, self.llm)
+                return Solution(
+                    agent_id=ag.id, challenge_id=ch.id, code=code,
+                    passed=passed, total=total, error_output=error_output,
+                    elapsed_seconds=elapsed,
+                )
+            except Exception as e:
+                return Solution(
+                    agent_id=ag.id, challenge_id=ch.id, code="",
+                    error_output=str(e),
+                )
+            finally:
+                with lock:
+                    in_progress.discard(key)
+
+        with Live(
+            display.build_solve_display(
+                agent_ids, challenge_ids, solve_results, in_progress,
+                self.llm.token_usage,
+            ),
+            console=display.console,
+            refresh_per_second=4,
+        ) as live:
+            with ThreadPoolExecutor(max_workers=self.max_workers) as executor:
+                futures = {}
+                for ag in self.state.agents:
+                    for ch in active_challenges:
+                        future = executor.submit(solve_one, ag, ch)
+                        futures[future] = (ag, ch)
+
+                for future in as_completed(futures):
+                    ag, ch = futures[future]
+                    sol = future.result()
+                    with lock:
+                        solve_results[(ag.id, ch.id)] = sol
+                    live.update(
+                        display.build_solve_display(
+                            agent_ids, challenge_ids, solve_results, in_progress,
+                            self.llm.token_usage,
+                        )
+                    )
+
+        # Collect into per-agent lists
+        for ag in self.state.agents:
+            round_solutions[ag.id] = [
+                solve_results[(ag.id, ch.id)] for ch in active_challenges
+            ]
+        self.all_solutions = round_solutions
+        display.show_phase_complete("solve", time.time() - t0, f"[dim]{n_tasks} tasks[/]")
+
+        # === AUTHOR PHASE (parallel) ===
+        display.show_phase_banner(
+            "author",
+            f"{len(self.state.agents)} agents authoring challenges"
+        )
+        t0 = time.time()
+
+        def author_one(ag: AgentInfo) -> tuple[AgentInfo, ChallengeSpec | None, bool]:
+            try:
+                new_ch = agent.author(ag, self.challenges, round_solutions, self.llm)
+                if new_ch:
+                    verify_code = agent.solve(ag, new_ch, self.llm)
                     passed, total, _, _ = challenges.run_tests(
-                        verify_code, new_challenge.test_code
+                        verify_code, new_ch.test_code
                     )
                     if passed > 0 and total > 0 and passed / total >= 0.5:
-                        challenges.save_challenge(new_challenge, self.challenges_dir)
-                        self.challenges.append(new_challenge)
-                        self.state.challenge_ids.append(new_challenge.id)
-                        result.new_challenges.append(new_challenge)
-                        print(f"  {ag.id} authored: {new_challenge.title}")
+                        return (ag, new_ch, True)
                     else:
-                        print(f"  {ag.id} authored challenge failed self-verify")
-                        new_challenge = None
-            except Exception as e:
-                print(f"  {ag.id} author failed: {e}")
-                new_challenge = None
+                        return (ag, new_ch, False)
+                return (ag, None, False)
+            except Exception:
+                return (ag, None, False)
 
-        # === SCORE PHASE ===
-        print("\n[Score Phase]")
+        with ThreadPoolExecutor(max_workers=self.max_workers) as executor:
+            author_futures = {
+                executor.submit(author_one, ag): ag
+                for ag in self.state.agents
+            }
+            for future in as_completed(author_futures):
+                ag, new_ch, accepted = future.result()
+                if accepted and new_ch:
+                    challenges.save_challenge(new_ch, self.challenges_dir)
+                    self.challenges.append(new_ch)
+                    self.state.challenge_ids.append(new_ch.id)
+                    result.new_challenges.append(new_ch)
+                display.show_author_result(
+                    ag.id,
+                    new_ch.title if new_ch else None,
+                    accepted,
+                )
+
+        display.show_phase_complete(
+            "author", time.time() - t0,
+            f"[dim]{len(result.new_challenges)} accepted[/]"
+        )
+
+        # === SCORE PHASE (fast, no LLM calls) ===
+        display.show_phase_banner("score", "Computing fitness scores")
+        t0 = time.time()
+
         for ag in self.state.agents:
             sols = round_solutions.get(ag.id, [])
 
-            # Solve score: average pass rate
             solve_score = (
                 sum(s.pass_rate for s in sols) / len(sols) if sols else 0.0
             )
 
-            # Novelty score: average AST novelty across solutions
             novelty_scores = []
             for sol in sols:
                 if sol.code:
@@ -216,7 +274,6 @@ class Tournament:
                 sum(novelty_scores) / len(novelty_scores) if novelty_scores else 0.0
             )
 
-            # Author score: based on whether authored challenge was accepted
             author_score = 0.0
             authored = None
             for nc in result.new_challenges:
@@ -239,27 +296,28 @@ class Tournament:
             )
             result.fitness_reports.append(report)
 
-        # === EVOLVE PHASE ===
-        print("\n[Evolve Phase]")
-        sorted_reports = sorted(
-            result.fitness_reports, key=lambda r: r.total_score, reverse=True
-        )
-        new_agents = []
+        display.show_phase_complete("score", time.time() - t0)
 
-        for i, ag in enumerate(self.state.agents):
-            report = next(r for r in sorted_reports if r.agent_id == ag.id)
+        # === EVOLVE PHASE (parallel) ===
+        display.show_phase_banner(
+            "evolve", f"{len(self.state.agents)} agents evolving"
+        )
+        t0 = time.time()
+
+        def evolve_one(
+            ag: AgentInfo, report: FitnessReport
+        ) -> tuple[int, AgentInfo, bool, bool]:
+            """Returns (index, new_agent, evolution_success, was_mutated)."""
+            idx = next(
+                i for i, a in enumerate(self.state.agents) if a.id == ag.id
+            )
             new_id = f"{ag.id}_g{ag.generation + 1}"
             new_agent = agent.clone_agent(
                 ag, new_id, ag.generation + 1, self.agents_dir
             )
 
-            # Evolve
             success = agent.evolve(new_agent, report, round_solutions, self.llm)
-            if success:
-                print(f"  {ag.id} evolved -> {new_id}")
-            else:
-                # Revert to parent on failed evolution
-                print(f"  {ag.id} evolution failed, keeping current code")
+            if not success:
                 shutil.rmtree(
                     new_agent.source_dir.parent.parent, ignore_errors=True
                 )
@@ -270,23 +328,43 @@ class Tournament:
                     parent_id=ag.id,
                 )
 
-            # Random mutation (25% chance)
+            was_mutated = False
             if mutator.should_mutate():
                 core_path = new_agent.source_dir / "core.py"
                 if core_path.exists():
                     original = core_path.read_text()
-                    mutated = mutator.mutate(original)
-                    # Validate mutation
+                    mutated_code = mutator.mutate(original)
                     try:
-                        compile(mutated, "<mutate>", "exec")
-                        core_path.write_text(mutated)
-                        print(f"  {new_id} mutated")
+                        compile(mutated_code, "<mutate>", "exec")
+                        core_path.write_text(mutated_code)
+                        was_mutated = True
                     except SyntaxError:
-                        print(f"  {new_id} mutation invalid, skipping")
+                        pass
 
-            new_agents.append(new_agent)
+            return (idx, new_agent, success, was_mutated)
 
-        self.state.agents = new_agents
+        new_agents: list[AgentInfo | None] = [None] * len(self.state.agents)
+
+        with ThreadPoolExecutor(max_workers=self.max_workers) as executor:
+            evolve_futures = {}
+            for ag in self.state.agents:
+                report = next(
+                    r for r in result.fitness_reports if r.agent_id == ag.id
+                )
+                future = executor.submit(evolve_one, ag, report)
+                evolve_futures[future] = ag
+
+            for future in as_completed(evolve_futures):
+                ag = evolve_futures[future]
+                idx, new_agent, success, was_mutated = future.result()
+                new_agents[idx] = new_agent
+                display.show_evolve_result(
+                    ag.id, new_agent.id, success, was_mutated
+                )
+
+        self.state.agents = [a for a in new_agents if a is not None]
+        display.show_phase_complete("evolve", time.time() - t0)
+
         return result
 
     def _save_round(self, round_num: int, result: RoundResult) -> None:
@@ -317,20 +395,17 @@ class Tournament:
         }
         round_file.write_text(json.dumps(data, indent=2))
 
-        # Append to summary.jsonl
         summary_file = self.tournament_dir / "summary.jsonl"
         with open(summary_file, "a") as f:
             for r in result.fitness_reports:
-                line = json.dumps(
-                    {
-                        "round": round_num,
-                        "agent": r.agent_id,
-                        "solve": r.solve_score,
-                        "author": r.author_score,
-                        "novelty": r.novelty_score,
-                        "total": r.total_score,
-                    }
-                )
+                line = json.dumps({
+                    "round": round_num,
+                    "agent": r.agent_id,
+                    "solve": r.solve_score,
+                    "author": r.author_score,
+                    "novelty": r.novelty_score,
+                    "total": r.total_score,
+                })
                 f.write(line + "\n")
 
     def _save_state(self) -> None:
@@ -368,7 +443,6 @@ class Tournament:
             for a in data["agents"]
         ]
         self.state.challenge_ids = data["challenge_ids"]
-        # Reload challenges
         self.challenges = []
         for cid in self.state.challenge_ids:
             cdir = self.challenges_dir / cid
