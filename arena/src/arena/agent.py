@@ -29,16 +29,19 @@ def _use_claude_code() -> bool:
     return shutil.which("claude") is not None
 
 
-def _run_claude_code(prompt: str, workdir: Path) -> str:
+def _run_claude_code(prompt: str, workdir: Path, timeout: int = 300) -> str:
     """Run a prompt through claude CLI and return the response."""
-    result = subprocess.run(
-        ["claude", "--print", "--dangerously-skip-permissions", "-p", prompt],
-        capture_output=True,
-        text=True,
-        timeout=120,
-        cwd=workdir,
-    )
-    return result.stdout.strip()
+    try:
+        result = subprocess.run(
+            ["claude", "--print", "--dangerously-skip-permissions", "-p", prompt],
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+            cwd=workdir,
+        )
+        return result.stdout.strip()
+    except subprocess.TimeoutExpired:
+        return ""
 
 
 def _run_api(llm: LLM, system: str, prompt: str) -> str:
