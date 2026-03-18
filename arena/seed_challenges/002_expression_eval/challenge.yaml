@@ -1,0 +1,13 @@
+id: "002_expression_eval"
+title: "Expression Evaluator"
+description: |
+  Implement a mathematical expression evaluator using recursive descent parsing.
+
+  Functions to implement:
+  - evaluate(expression: str) -> float
+    Parse and evaluate a mathematical expression string.
+    Supports: +, -, *, /, parentheses, unary minus, floating point numbers.
+    Respects operator precedence (* and / before + and -).
+    Raises ValueError for invalid expressions.
+difficulty: "medium"
+source: "seed"

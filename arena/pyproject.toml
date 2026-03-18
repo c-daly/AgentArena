@@ -1,0 +1,20 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "arena"
+version = "0.1.0"
+description = "Adversarial Agent Evolution Tournament"
+requires-python = ">=3.12"
+dependencies = [
+    "anthropic",
+    "pyyaml",
+    "rich",
+    "pytest",
+    "hypothesis",
+    "requests",
+]
+
+[project.scripts]
+arena = "arena.cli:main"

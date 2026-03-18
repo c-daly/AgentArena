@@ -1,0 +1,21 @@
+id: "003_schema_validator"
+title: "Schema Validator"
+description: |
+  Implement a recursive JSON schema validator.
+
+  Functions to implement:
+  - validate(data: any, schema: dict) -> bool
+    Validate data against a schema definition. Return True if valid, False otherwise.
+
+    Schema format:
+    - {"type": "int"} - data must be an int
+    - {"type": "str"} - data must be a str
+    - {"type": "float"} - data must be a float (or int)
+    - {"type": "bool"} - data must be a bool
+    - {"type": "list", "items": <schema>} - data must be a list, each item matching the items schema
+    - {"type": "dict", "fields": {"key": <schema>, ...}} - data must be a dict with specified fields
+    - {"type": "dict", "fields": ..., "optional": ["key", ...]} - listed keys are optional
+    - {"type": "any"} - any data is valid
+    - {"type": "union", "options": [<schema>, ...]} - data must match at least one schema
+difficulty: "medium"
+source: "seed"

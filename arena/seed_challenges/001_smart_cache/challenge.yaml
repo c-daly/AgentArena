@@ -1,0 +1,14 @@
+id: "001_smart_cache"
+title: "Smart Cache"
+description: |
+  Implement an LRU cache with TTL (time-to-live) support.
+
+  Functions to implement:
+  - smart_cache(maxsize: int, ttl: float) -> decorator
+    Returns a decorator that caches function results with LRU eviction and TTL expiration.
+    - maxsize: maximum number of cached entries
+    - ttl: time-to-live in seconds for each cache entry
+    - The decorated function should have a .cache_info() method returning a dict with 'hits', 'misses', 'size' keys
+    - The decorated function should have a .cache_clear() method
+difficulty: "medium"
+source: "seed"
