@@ -189,6 +189,10 @@ def evolve(
             f"  {sol.challenge_id}: {sol.passed}/{sol.total}"
             f" ({sol.pass_rate:.0%})\n"
         )
+        if sol.error_output:
+            err_lines = sol.error_output.strip().splitlines()[-3:]
+            for line in err_lines:
+                fitness_text += f"    {line}\n"
 
     # Format rival solutions (exclude self)
     solutions_text = ""
