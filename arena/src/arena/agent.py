@@ -10,6 +10,9 @@ import subprocess
 from pathlib import Path
 
 from arena.llm import LLM
+
+# Project root — claude CLI needs this as cwd to load CLAUDE.md
+_PROJECT_ROOT = Path(__file__).parent.parent.parent.parent
 from arena.models import AgentInfo, ChallengeSpec, FitnessReport, Solution
 
 
@@ -30,20 +33,17 @@ def _use_claude_code() -> bool:
 
 
 def _run_claude_code(prompt: str, workdir: Path, timeout: int = 300) -> str:
-    """Run a prompt through claude CLI, piping prompt via stdin."""
+    """Run a prompt through claude CLI."""
     try:
-        proc = subprocess.Popen(
-            ["claude", "--print", "--dangerously-skip-permissions"],
-            stdin=subprocess.PIPE,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
+        result = subprocess.run(
+            ["claude", "--print", "--dangerously-skip-permissions", "-p", prompt],
+            capture_output=True,
             text=True,
+            timeout=timeout,
             cwd=workdir,
         )
-        stdout, _ = proc.communicate(input=prompt, timeout=timeout)
-        return stdout.strip()
+        return result.stdout.strip()
     except subprocess.TimeoutExpired:
-        proc.kill()
         return ""
 
 
@@ -55,18 +55,19 @@ def _run_api(llm: LLM, system: str, prompt: str) -> str:
 def _extract_code(response: str) -> str:
     """Extract Python code from LLM response, stripping markdown fences and preamble."""
     import re
-    match = re.search(r'```python\n(.*?)```', response, re.DOTALL)
+    # Greedy match to last fence — evolved code contains nested fences in f-strings
+    match = re.search(r'```python\n(.*)\n```', response, re.DOTALL)
     if match:
         return match.group(1).strip()
-    match = re.search(r'```\n(.*?)```', response, re.DOTALL)
+    match = re.search(r'```\n(.*)\n```', response, re.DOTALL)
     if match:
         return match.group(1).strip()
+    # No fences — strip leading non-code lines
     lines = response.strip().splitlines()
-    code_starts = ('import ', 'from ', 'def ', 'class ', '#')
+    code_starts = ('import ', 'from ', 'def ', 'class ', '#', '"""')
     while lines and not lines[0].startswith(code_starts):
         lines.pop(0)
     return chr(10).join(lines).strip()
-
 
 
 # ---------------------------------------------------------------------------
@@ -146,7 +147,7 @@ def solve(agent: AgentInfo, challenge: ChallengeSpec, llm: LLM) -> str:
     prompt = module.solve_prompt(challenge.description, challenge.test_code)
 
     if _use_claude_code():
-        response = _run_claude_code(prompt, agent.source_dir)
+        response = _run_claude_code(prompt, _PROJECT_ROOT)
     else:
         response = _run_api(
             llm,
@@ -179,7 +180,7 @@ def author(
     prompt = module.author_prompt(challenges_text, solutions_text)
 
     if _use_claude_code():
-        response = _run_claude_code(prompt, agent.source_dir)
+        response = _run_claude_code(prompt, _PROJECT_ROOT)
     else:
         response = _run_api(
             llm, "You are designing programming challenges.", prompt
@@ -262,7 +263,7 @@ def evolve(
     prompt = module.evolve_prompt(own_source, journal, "")
 
     if _use_claude_code():
-        response = _run_claude_code(prompt, agent.source_dir)
+        response = _run_claude_code(prompt, _PROJECT_ROOT)
     else:
         response = _run_api(
             llm, "You are rewriting your own source code to improve.", prompt
