@@ -1,0 +1,9 @@
+id: longest_palindromic_substring
+title: Longest Palindromic Substring
+description: "Given a string s, return the longest palindromic substring in s.\n\n\
+  \ \n\nExample 1:\n\nInput: s = \"babad\"\nOutput: \"bab\"\nExplanation: \"aba\"\
+  \ is also a valid answer.\n\nExample 2:\n\nInput: s = \"cbbd\"\nOutput: \"bb\"\n\
+  \n \n\nConstraints:\n\n\t- 1 <= s.length <= 1000\n\n\t- s consist of only digits\
+  \ and English letters."
+difficulty: medium
+source: leetcode

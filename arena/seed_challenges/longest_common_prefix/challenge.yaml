@@ -1,0 +1,11 @@
+id: longest_common_prefix
+title: Longest Common Prefix
+description: "Write a function to find the longest common prefix string amongst an\
+  \ array of strings.\n\nIf there is no common prefix, return an empty string \"\"\
+  .\n\n \n\nExample 1:\n\nInput: strs = [\"flower\",\"flow\",\"flight\"]\nOutput:\
+  \ \"fl\"\n\nExample 2:\n\nInput: strs = [\"dog\",\"racecar\",\"car\"]\nOutput: \"\
+  \"\nExplanation: There is no common prefix among the input strings.\n\n \n\nConstraints:\n\
+  \n\t- 1 <= strs.length <= 200\n\n\t- 0 <= strs[i].length <= 200\n\n\t- strs[i] consists\
+  \ of only lowercase English letters if it is non-empty."
+difficulty: easy
+source: leetcode

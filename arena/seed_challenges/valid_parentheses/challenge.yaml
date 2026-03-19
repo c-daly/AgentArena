@@ -1,0 +1,14 @@
+id: valid_parentheses
+title: Valid Parentheses
+description: "Given a string s containing just the characters '(', ')', '{', '}',\
+  \ '[' and ']', determine if the input string is valid.\n\nAn input string is valid\
+  \ if:\n\n\t- Open brackets must be closed by the same type of brackets.\n\n\t- Open\
+  \ brackets must be closed in the correct order.\n\n\t- Every close bracket has a\
+  \ corresponding open bracket of the same type.\n\n \n\nExample 1:\n\nInput: s =\
+  \ \"()\"\n\nOutput: true\n\nExample 2:\n\nInput: s = \"()[]{}\"\n\nOutput: true\n\
+  \nExample 3:\n\nInput: s = \"(]\"\n\nOutput: false\n\nExample 4:\n\nInput: s = \"\
+  ([])\"\n\nOutput: true\n\nExample 5:\n\nInput: s = \"([)]\"\n\nOutput: false\n\n\
+  \ \n\nConstraints:\n\n\t- 1 <= s.length <= 104\n\n\t- s consists of parentheses\
+  \ only '()[]{}'."
+difficulty: easy
+source: leetcode

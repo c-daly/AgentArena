@@ -1,0 +1,14 @@
+id: merge_k_sorted_lists
+title: Merge k Sorted Lists
+description: "You are given an array of k linked-lists lists, each linked-list is\
+  \ sorted in ascending order.\n\nMerge all the linked-lists into one sorted linked-list\
+  \ and return it.\n\n \n\nExample 1:\n\nInput: lists = [[1,4,5],[1,3,4],[2,6]]\n\
+  Output: [1,1,2,3,4,4,5,6]\nExplanation: The linked-lists are:\n[\n  1->4->5,\n \
+  \ 1->3->4,\n  2->6\n]\nmerging them into one sorted linked list:\n1->1->2->3->4->4->5->6\n\
+  \nExample 2:\n\nInput: lists = []\nOutput: []\n\nExample 3:\n\nInput: lists = [[]]\n\
+  Output: []\n\n \n\nConstraints:\n\n\t- k == lists.length\n\n\t- 0 <= k <= 104\n\n\
+  \t- 0 <= lists[i].length <= 500\n\n\t- -104 <= lists[i][j] <= 104\n\n\t- lists[i]\
+  \ is sorted in ascending order.\n\n\t- The sum of lists[i].length will not exceed\
+  \ 104."
+difficulty: hard
+source: leetcode

@@ -119,17 +119,17 @@ class Tournament:
         result = RoundResult(round_num=round_num)
         round_solutions: dict[str, list[Solution]] = {}
 
-        # Select challenges: authored challenges get priority, sample from pool for rest
+        # Select challenges: authored get priority, sample from full pool for rest
         import random
         authored = [c for c in self.challenges if c.source == "authored"]
-        pool = [c for c in self.challenges if c.source != "authored"]
         active_challenges = authored[:self.challenges_per_round]
         remaining = self.challenges_per_round - len(active_challenges)
-        if remaining > 0 and pool:
-            active_challenges += random.sample(pool, min(remaining, len(pool)))
-        # If still short, sample from full pool with replacement
-        while len(active_challenges) < self.challenges_per_round and self.challenges:
-            active_challenges.append(random.choice(self.challenges))
+        if remaining > 0 and self.challenges:
+            others = [c for c in self.challenges if c not in active_challenges]
+            if others:
+                active_challenges += random.choices(others, k=remaining)
+            else:
+                active_challenges += random.choices(self.challenges, k=remaining)
 
         agent_ids = [ag.id for ag in self.state.agents]
         challenge_ids = [ch.id for ch in active_challenges]
