@@ -55,6 +55,8 @@ class Tournament:
         self.state = TournamentState()
         self.challenges: list[ChallengeSpec] = []
         self.all_solutions: dict[str, list[Solution]] = {}
+        self.best_dir = tournament_dir / "best"
+        self.best_scores: dict[str, float] = {}  # base_id -> best total_score
 
     def setup(self, baseline_dir: Path, seed_challenges_dir: Path) -> None:
         """Initialize tournament: create dirs, clone baseline agents, load seed challenges."""
@@ -298,6 +300,19 @@ class Tournament:
 
         display.show_phase_complete("score", time.time() - t0)
 
+        # === BEST-CODE TRACKING ===
+        self.best_dir.mkdir(exist_ok=True)
+        for ag in self.state.agents:
+            report = next(r for r in result.fitness_reports if r.agent_id == ag.id)
+            base_id = ag.id.split("_g")[0]
+            prev_best = self.best_scores.get(base_id, -1.0)
+            if report.total_score > prev_best:
+                self.best_scores[base_id] = report.total_score
+                best_agent_dir = self.best_dir / base_id
+                if best_agent_dir.exists():
+                    shutil.rmtree(best_agent_dir)
+                shutil.copytree(ag.source_dir, best_agent_dir)
+
         # === EVOLVE PHASE (parallel) ===
         display.show_phase_banner(
             "evolve", f"{len(self.state.agents)} agents evolving"
@@ -311,9 +326,20 @@ class Tournament:
             idx = next(
                 i for i, a in enumerate(self.state.agents) if a.id == ag.id
             )
-            new_id = f"{ag.id}_g{ag.generation + 1}"
+            base_id = ag.id.split("_g")[0]
+            new_id = f"{base_id}_g{ag.generation + 1}"
+
+            # Evolve from best-performing code, not current (possibly broken) code
+            best_agent_dir = self.best_dir / base_id
+            evolve_source = ag
+            if best_agent_dir.exists():
+                evolve_source = AgentInfo(
+                    id=ag.id, generation=ag.generation,
+                    source_dir=best_agent_dir, parent_id=ag.parent_id,
+                )
+
             new_agent = agent.clone_agent(
-                ag, new_id, ag.generation + 1, self.agents_dir
+                evolve_source, new_id, ag.generation + 1, self.agents_dir
             )
 
             success = agent.evolve(new_agent, report, round_solutions, self.llm)
@@ -423,6 +449,7 @@ class Tournament:
                 for a in self.state.agents
             ],
             "challenge_ids": self.state.challenge_ids,
+            "best_scores": self.best_scores,
         }
         state_file.write_text(json.dumps(data, indent=2))
 
@@ -443,6 +470,7 @@ class Tournament:
             for a in data["agents"]
         ]
         self.state.challenge_ids = data["challenge_ids"]
+        self.best_scores = data.get("best_scores", {})
         self.challenges = []
         for cid in self.state.challenge_ids:
             cdir = self.challenges_dir / cid
