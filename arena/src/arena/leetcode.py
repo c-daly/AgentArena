@@ -165,10 +165,16 @@ def fetch_problems(difficulty: str, limit: int) -> list[dict]:
     Returns:
         List of dicts with keys: title, slug, difficulty, description.
     """
+    import random
+    # Randomize offset to get different problems each run
+    # LeetCode has ~800 easy, ~1500 medium, ~700 hard
+    pool_sizes = {"EASY": 800, "MEDIUM": 1500, "HARD": 700}
+    pool = pool_sizes.get(difficulty.upper(), 500)
+    skip = random.randint(0, max(0, pool - limit))
     variables = {
         "categorySlug": "",
         "limit": limit,
-        "skip": 0,
+        "skip": skip,
         "filters": {"difficulty": difficulty.upper()},
     }
 
